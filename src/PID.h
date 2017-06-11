@@ -1,14 +1,22 @@
+#include <vector>
 #ifndef PID_H
 #define PID_H
 
+
 class PID {
-public:
+private:
   /*
   * Errors
   */
   double p_error;
   double i_error;
   double d_error;
+
+  std::vector<double> squared_err;
+  double best_error;
+  double dp[3];
+  int dp_index;
+  int count;
 
   /*
   * Coefficients
@@ -17,6 +25,7 @@ public:
   double Ki;
   double Kd;
 
+public:
   /*
   * Constructor
   */
@@ -41,6 +50,14 @@ public:
   * Calculate the total PID error.
   */
   double TotalError();
+
+  double getControlValue(double cte);
+
+  bool Twiddle();
+
+  bool needTwiddle();
+
+
 };
 
 #endif /* PID_H */

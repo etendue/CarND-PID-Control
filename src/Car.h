@@ -4,6 +4,7 @@
  *  Created on: Jun 8, 2017
  *      Author: etendue
  */
+#include <vector>
 
 #ifndef CAR_H_
 #define CAR_H_
@@ -13,7 +14,8 @@ class Car {
   Car(double length=2.6);
   virtual ~Car();
   void init(double x,double y, double orientation);
-  void move(double speed,double steering,double t,const double tolerance=0.001);
+  void move(double distance,double steering,const double tolerance=0.001);
+  static double run(Car& car,double params[],int steps,double speed);
 
   double x_;
   double y_;

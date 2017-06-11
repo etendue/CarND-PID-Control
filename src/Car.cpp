@@ -6,6 +6,8 @@
  */
 
 #include <math.h>
+#include <algorithm>
+#include <iostream>
 #include "Car.h"
 using namespace std;
 
@@ -24,16 +26,16 @@ Car::~Car() {
 void Car::init(double x, double y, double orientation) {
   x_=x;
   y_=y;
-  orientation_=orientation % (2*M_PI);
+  orientation_=fmod(orientation,2*M_PI);
 }
 
-void Car::move(double speed, double steering, double t,const double tolerance) {
+void Car::move(double distance, double steering, const double tolerance) {
 	//check steering angle boundary
 	double steering_abs = min(fabs(steering),max_steering_angle);
 	steering = copysign(steering_abs,steering);
 
 	//check the distance boundary
-	double distance = max(0.0,speed*t);
+	distance = max(0.0,distance);
 
 	//add noise if necessary
 	//the turn angle based on bicycle mode
@@ -43,13 +45,31 @@ void Car::move(double speed, double steering, double t,const double tolerance) {
 		// approximate by straight line motion
 		x_ += distance * cos(orientation_);
 		y_ += distance * sin(orientation_);
-		orientation_ = (orientation_ + turn_angle) % (2.0 * M_PI);
 	} else {
 		// approximate bicycle model for motion
 		double radius = distance / turn_angle;
 		x_ += radius * (sin(orientation_ + turn_angle) - sin(orientation_));
 		y_ += radius * (cos(orientation_ + turn_angle) - cos(orientation_));
-		orientation_ = (orientation_ + turn_angle) % (2.0 * M_PI);
 	}
+	orientation_ = fmod(orientation_ + turn_angle, 2.0 * M_PI);
 
+}
+double Car::run(Car& car, double params[],int steps,double speed){
+
+   double err = 0.0;
+   double prev_cte = car.y_;
+   double integ_cte = prev_cte;
+   double cte = 0;
+
+   for(uint i=0; i < steps; i++){
+     cte= car.y_;
+     double cte_d = cte - prev_cte;
+     integ_cte += cte;
+     double steer = -params[0] * cte - params[1]*cte_d - params[2]*integ_cte;
+     car.move(speed,steer);
+     //cout <<"x:" <<car.x_ <<" y:"<<car.y_<<endl;
+     prev_cte = cte;
+     err += cte*cte;
+   }
+   return err;
 }
