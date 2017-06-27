@@ -11,12 +11,7 @@ private:
   double p_error;
   double i_error;
   double d_error;
-
-  std::vector<double> squared_err;
-  double best_error;
-  double dp[3];
-  int dp_index;
-  int count;
+  double p_error_last;
 
   /*
   * Coefficients
@@ -51,12 +46,9 @@ public:
   */
   double TotalError();
 
-  double getControlValue(double cte);
+  double getControlValue(double cte, const double min=-1.0, const double max=1.0);
 
-  bool Twiddle();
-
-  bool needTwiddle();
-
+  bool TuneKp();
 
 };
 

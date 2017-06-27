@@ -3,9 +3,14 @@
 #include "json.hpp"
 #include "PID.h"
 #include <math.h>
+#include <algorithm>
+#include <thread>
+#include <fstream>
+#include <chrono>
 
 // for convenience
 using json = nlohmann::json;
+using namespace std;
 
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
@@ -28,15 +33,94 @@ std::string hasData(std::string s) {
   return "";
 }
 
-int main()
+/***
+ * help function to parse command line option
+ */
+string getCmdOption(char** begin, char** end, const string &option)
 {
+	char ** itr= std::find(begin,end,option);
+	if(itr !=end && ++itr!= end) return string(*itr);
+	return string();
+}
+bool cmdOptionExists(char** begin, char** end, const string &optoin){
+	return std::find(begin,end,optoin)!=end;
+}
+
+/***
+ * thread function for manual tune pid value,
+ * param: pid_y the instance of pid for y position
+ * param: pid_s the isntance of pid for speed
+ * param: h the socket to send reset command to simulator
+ */
+void manualTunePIDFunc(PID& pid_y, PID& pid_s, uWS::WebSocket<uWS::SERVER> &ws);
+
+int main(int argc, char * argv[])
+{
+	//pid parameters for position y
+	double Kp_y(0),Ki_y(0),Kd_y(0);
+	//pid parameters for speed
+	double Kp_s(0),Ki_s(0),Kd_s(0);
+	//target speed
+	double target_speed = 100;
+	//tune method
+	bool manual = true;
+	//output file name for errors
+	string output_file="";
+	/**
+	 * do commandline parsing
+	 */
+	if(cmdOptionExists(argv,argv+argc,"-h")){
+		cout<< "usage "<<endl;
+		cout<< "  Option: --init \"Kp_position_y Ki_position_y Kd_position_y Kp_speed Ki_speed Kd_speed\""<<endl;
+		cout<< "  Option: --target_speed [speed]  default:100"<<endl;
+		cout<< "  Option: -o err_output_file_name default \"error.txt\""<<endl;
+		cout<< "  Option: --auto  auto tune PID parameters" << endl;
+		cout<< "  Option: --manual manual tune PID parameters" <<endl;
+		cout<< "  Option: -h this message"<<endl;
+		return 0;
+	}
+	string init_parameters = getCmdOption(argv,argv+argc,"--init");
+	if(!init_parameters.empty()){
+		stringstream ss(init_parameters);
+		ss>>Kp_y>>Ki_y>>Kd_y>>Kp_s>>Ki_s>>Kd_s;
+	}
+	if(!getCmdOption(argv,argv+argc,"-o").empty()){
+		output_file = getCmdOption(argv,argv+argc,"-o");
+	}
+
+	string speed = getCmdOption(argv, argv + argc, "--target_speed");
+	if (!speed.empty()) {
+		stringstream ss(speed);
+		ss >> target_speed;
+	}
+
+	manual = !cmdOptionExists(argv,argv+argc,"--auto");
+
+	cout << "Intial PID for Y Position:" <<Kp_y<<" "<<Ki_y<<" "<<Kd_y<<endl;
+	cout << "Intial PID for      Speed:" <<Kp_s<<" "<<Ki_s<<" "<<Kd_s<<endl;
+	cout << "Target Speed:" << target_speed <<endl;
+	cout << "Tune method:"<< (manual?"manual":"auto")<<endl;
+
+
   uWS::Hub h;
+  uWS::WebSocket<uWS::SERVER> connected_ws;
+  thread tune_t;
 
-  PID pid;
+  PID pid_y;
+  PID pid_s;
   // TODO: Initialize the pid variable.
-  pid.Init(0.08,0,0);
+  pid_y.Init(Kp_y,Ki_y,Kd_y);
+  //pid_speed.Init(5.78815/10,0,0);
+  pid_s.Init(Kp_s,Ki_s,Kd_s);
 
-  h.onMessage([&pid](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
+  //open a file to write cte error
+  ofstream log;
+  if(!output_file.empty()){
+	  log.open(output_file);
+  }
+  auto begin = chrono::system_clock::now();
+
+  h.onMessage([&](uWS::WebSocket<uWS::SERVER> ws, char *data, size_t length, uWS::OpCode opCode) {
     // "42" at the start of the message means there's a websocket message event.
     // The 4 signifies a websocket message
     // The 2 signifies a websocket event
@@ -52,6 +136,7 @@ int main()
           double speed = std::stod(j[1]["speed"].get<std::string>());
           double angle = std::stod(j[1]["steering_angle"].get<std::string>());
           double steer_value;
+          double throttle_value;
           /*
           * TODO: Calcuate steering value here, remember the steering value is
           * [-1, 1].
@@ -59,27 +144,22 @@ int main()
           * another PID controller to control the speed!
           */
 
-          steer_value =  pid.getControlValue(cte);
-          if(steer_value > 1) steer_value =1;
-          if(steer_value < -1) steer_value = -1;
-          
-        /*  if(pid.needTwiddle())
-          {
-            pid.Twiddle();
-            //if(fabs(cte)>3){
-              std::string msg = "42[\"reset\",{}]";
-              ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
-            //}
-          }*/
+          steer_value =  pid_y.getControlValue(cte, -1, 1);
+          throttle_value = pid_s.getControlValue(speed - target_speed, -1, 1);
+          if(log.is_open()){
+        	  chrono::milliseconds ms = chrono::duration_cast<chrono::milliseconds>(chrono::system_clock::now() - begin);
 
+        	  log << ms.count()<<" "<< cte << " "<< speed - target_speed<<" "<<steer_value <<" "<<throttle_value<<endl;
+        	  log.flush();
+          }
           // DEBUG
-          std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
-
+          //std::cout << "CTE: " << cte << " Steering Value: " << steer_value << std::endl;
+		  //std::cout << "CTE- Speed: " << speed -10 <<std::endl;
           json msgJson;
           msgJson["steering_angle"] = steer_value;
-          msgJson["throttle"] = 0.3;
+          msgJson["throttle"] = throttle_value;
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
-          std::cout << msg << std::endl;
+          //std::cout << msg << std::endl;
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
@@ -105,8 +185,9 @@ int main()
     }
   });
 
-  h.onConnection([&h](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
+  h.onConnection([&](uWS::WebSocket<uWS::SERVER> ws, uWS::HttpRequest req) {
     std::cout << "Connected!!!" << std::endl;
+    connected_ws = ws;
   });
 
   h.onDisconnection([&h](uWS::WebSocket<uWS::SERVER> ws, int code, char *message, size_t length) {
@@ -119,10 +200,60 @@ int main()
   {
     std::cout << "Listening to port " << port << std::endl;
   }
-  else
-  {
-    std::cerr << "Failed to listen to port" << std::endl;
-    return -1;
+  else {
+		std::cerr << "Failed to listen to port" << std::endl;
+		return -1;
   }
+
+	//start a thread for processing manual tune
+	if (manual) {
+
+		tune_t = thread(manualTunePIDFunc, ref(pid_y), ref(pid_s),
+				ref(connected_ws));
+		cout << "start Manual Tune thread..." << endl;
+	}
   h.run();
+  if(tune_t.joinable()){
+	  tune_t.join();
+  }
+  log.close();
+
+}
+
+void manualTunePIDFunc(PID& pid_y, PID& pid_s, uWS::WebSocket<uWS::SERVER> &ws){
+	char cmd;
+	bool run=true;
+	while(run){
+		cout<<"Command(R=reset simulator;Y= pid values for Y; S= pid for speed;T=exit):"<<endl;
+		cin >> cmd;
+		switch(cmd){
+		case 'R':{
+			string msg = "42[\"reset\",{}]";
+			ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
+			break;
+		}
+		case 'Y':{
+			cout << "values:";
+			double Kp, Ki, Kd;
+			cin >> Kp >> Ki >> Kd;
+			pid_y.Init(Kp, Ki, Kd);
+			break;
+		}
+		case 'S':{
+			cout << "values:";
+			double Kp, Ki, Kd;
+			cin >> Kp >> Ki >> Kd;
+			pid_s.Init(Kp, Ki, Kd);
+			break;
+		}
+		case 'T':{
+			run = false;
+			cout << "Tuning PID exits"<<endl;
+			break;
+		}
+		default:{
+			cout<< "!!!Unknown command:" <<cmd<<endl;
+		}
+		}
+	}
 }
